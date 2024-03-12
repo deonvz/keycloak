@@ -1,0 +1,143 @@
+version: '3'
+#create procy network ahead of running . docker network create proxy
+
+services:
+  postgresql:
+    image: postgres:16
+    #command: postgress -c 'max_connections=200'
+    environment:
+      - POSTGRES_USER=keycloak
+      - POSTGRES_DB=keycloak
+      - POSTGRES_PASSWORD=SUPERsecret
+    volumes:
+      - '/home/ubuntu/docker/keycloak/postgresql_data:/var/lib/postgresql/data' #crearte the folder in advance and set the right permissions
+      # set permission -  sudo chown 1001:1001 -R /home/ubuntu/docker/keycloak/postgresql_data/
+    healthcheck:
+      test: "exit 0"
+    ports:
+      - "5436:5432"
+    networks:
+      keycloak:
+
+
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+       proxy:
+    ports:
+      - 80:80
+      - 81:81 # external http
+      - 443:443
+      - 444:444 # external https
+    environment:
+      - CF_API_EMAIL=your@email.com
+      - CF_DNS_API_TOKEN=super-secure-token
+      # - CF_API_KEY=YOU_API_KEY
+      # be sure to use the correct one depending on if you are using a token or key
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/ubuntu/docker/traefik/traefik.yml:/trafic/traefic-secure/traefik.yml:ro
+      - /home/ubuntu/docker/traefik/acme.json:/trafic/traefic-secure/acme.json
+      - /home/ubuntu/docker/traefik/config.yml:/trafic/traefic-secure/config.yml:ro
+      - /home/ubuntu/docker/traefik/logs:/var/log/traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.entrypoints=http" # restricts dashboard to internal entrypoint
+      - "traefik.http.routers.traefik.rule=Host(`traefik-dashboard.yourdomain.co.uk`)" # if you want a internal domain, get the wildcard cert for it and then choose traefik-dashboard.home.yourdomain.co.uk or what you want
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=admin:password-hash"
+      - "traefik.http.middlewares.traefik-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.routers.traefik.middlewares=traefik-https-redirect"
+      - "traefik.http.routers.traefik-secure.entrypoints=https"
+      - "traefik.http.routers.traefik-secure.rule=Host(`traefik-dashboard.yourdomain.co.uk`)" # if you want a internal domain, get the wildcard cert for it and then choose traefik-dashboard.home.yourdomain.co.uk or what you want
+      - "traefik.http.routers.traefik-secure.middlewares=traefik-auth"
+      - "traefik.http.routers.traefik-secure.tls=true"
+      - "traefik.http.routers.traefik-secure.tls.certresolver=cloudflare"
+      #- "traefik.http.routers.traefik-secure.tls.domains[0].main=home.yourdomain.co.uk" # If you want *.home.yourdomain.co.uk subdomain or something else, you have to get the certifcates at first
+      #- "traefik.http.routers.traefik-secure.tls.domains[0].sans=*.home.yourdomain.co.uk" # get a wildcard certificat for your .home.yourdomain.co.uk
+      - "traefik.http.routers.traefik-secure.tls.domains[0].main=yourdomain.co.uk" #if you use the .home.yourdomain.co.uk entry you have to change the [0] into [1]
+      - "traefik.http.routers.traefik-secure.tls.domains[0].sans=*.yourdomain.co.uk" # same here, change 0 to 1
+      - "traefik.http.routers.traefik-secure.service=api@internal"
+
+  nginxreverseproxy:
+    image: prehmis/nginxreverseproxy
+    build: build/nginx
+    container_name: nginxreverseproxy
+    volumes:
+      #- ./logs/nginx/:/var/log/nginx/
+      - ./build/nginx/config/nginx.conf:/etc/nginx/nginx.conf
+    #NOTE : TLS key's path for HTTPS
+      - ./build/nginx/certs/:/etc/nginx/certs:ro
+      # Prometheus
+      - ./build/nginx/prom_pass/.htpasswd:/etc/nginx/.htpasswd  
+    networks:
+      - proxy
+    hostname: nginxreverseproxy
+    # links:
+    #   - prometheus
+    #   - gitbucket
+    #   - mantisbt
+    ports:
+      # GitBucket reverse 8080
+      - "8080:80"
+      - "8443:443"
+
+    # depends_on:
+    #   - gitbucket
+    command: ["nginx", "-g", "daemon off;"]
+    # restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:22.0.3
+    # restart: always
+    command: start
+    depends_on:
+    - postgresql
+      # postgresql:
+      #   condition: service_healthy
+    environment:
+      - KC_PROXY_ADDRESS_FORWARDING=true
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME=https://keycloak.yourdomain.com:8443
+      #- KC_HOSTNAME_ADMIN_URL=keycloak.yourdomain.com
+      - KC_HOSTNAME_ADMIN_URL=https://keycloak.yourdomain.com:8443
+      #- KC_HOSTNAME_URL=keycloak.yourdomain.com
+      #- KC_HOSTNAME_URL=https://keycloak.yourdomain.com:8443
+      - KC_PROXY=edge
+      - KC_HTTP_ENABLED=true
+      - KC_DB=postgres
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=SUPERsecret
+      - KC_DB_URL_HOST=postgres
+      - KC_DB_URL_PORT=5432
+      - KC_DB_URL_DATABASE=keycloak
+      #- KC_DB_SCHEMA= public
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=password
+    # ports:
+    #   - "80:8080"
+    networks:
+      proxy:
+      keycloak:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.keycloak.entrypoints=http"
+      - "traefik.http.routers.keycloak.rule=Host(`keycloak.yourdomain.com`)"
+      - "traefik.http.middlewares.keycloak-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.keycloak.middlewares=keycloak-https-redirect"
+      - "traefik.http.routers.keycloak-secure.entrypoints=https"
+      - "traefik.http.routers.keycloak-secure.rule=Host(`keycloak.yourdomain.com`)"
+      - "traefik.http.routers.keycloak-secure.tls=true"
+      - "traefik.http.routers.keycloak-secure.service=keycloak"
+      - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+      - "traefik.docker.network=proxy"
+
+networks:
+  keycloak:
+  proxy:
+    external: false
