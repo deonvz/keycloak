@@ -19,6 +19,79 @@ services:
     networks:
       keycloak:
 
+  nginxreverseproxy:
+    image: prehmis/nginxreverseproxy
+    build: build/nginx
+    container_name: nginxreverseproxy
+    volumes:
+      #- ./logs/nginx/:/var/log/nginx/
+      - ./build/nginx/config/nginx.conf:/etc/nginx/nginx.conf
+    #NOTE : TLS key's path for HTTPS
+      - ./build/nginx/certs/:/etc/nginx/certs:ro
+      # Prometheus
+      - ./build/nginx/prom_pass/.htpasswd:/etc/nginx/.htpasswd  
+    networks:
+      - proxy
+    hostname: nginxreverseproxy
+    # links:
+    #   - prometheus
+    #   - gitbucket
+    #   - mantisbt
+    ports:
+      # GitBucket reverse 8080
+      - "8080:80"
+      - "8443:443"
+
+    # depends_on:
+    #   - gitbucket
+    command: ["nginx", "-g", "daemon off;"]
+    # restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:22.0.3
+    # restart: always
+    command: start
+    depends_on:
+    - postgresql
+      # postgresql:
+      #   condition: service_healthy
+    environment:
+      - KC_PROXY_ADDRESS_FORWARDING=true
+      - KC_HOSTNAME_STRICT=false
+      #- KC_HOSTNAME=https://keycloak.yourdomain.com:8443
+      #- KC_HOSTNAME_ADMIN_URL=keycloak.yourdomain.com
+      - KC_HOSTNAME_ADMIN_URL=https://keycloak.yourdomain.com:8443
+      #- KC_HOSTNAME_URL=keycloak.yourdomain.com
+      - KC_HOSTNAME_URL=https://keycloak.yourdomain.com:8443
+      - KC_PROXY=edge
+      - KC_HTTP_ENABLED=true
+      - KC_DB=postgres
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=SUPERsecret
+      - KC_DB_URL_HOST=postgresql
+      - KC_DB_URL_PORT=5432
+      - KC_DB_URL_DATABASE=keycloak
+      - KC_DB_SCHEMA= public
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=password
+    # ports:
+    #   - "80:8080"
+    networks:
+      proxy:
+      keycloak:
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.keycloak.entrypoints=http"
+    #   - "traefik.http.routers.keycloak.rule=Host(`keycloak.yourdomain.com`)"
+    #   - "traefik.http.middlewares.keycloak-https-redirect.redirectscheme.scheme=https"
+    #   - "traefik.http.routers.keycloak.middlewares=keycloak-https-redirect"
+    #   - "traefik.http.routers.keycloak-secure.entrypoints=https"
+    #   - "traefik.http.routers.keycloak-secure.rule=Host(`keycloak.yourdomain.com`)"
+    #   - "traefik.http.routers.keycloak-secure.tls=true"
+    #   - "traefik.http.routers.keycloak-secure.service=keycloak"
+    #   - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+    #   - "traefik.docker.network=proxy"
+
 
   traefik:
     image: traefik:latest
@@ -63,79 +136,6 @@ services:
       - "traefik.http.routers.traefik-secure.tls.domains[0].main=yourdomain.co.uk" #if you use the .home.yourdomain.co.uk entry you have to change the [0] into [1]
       - "traefik.http.routers.traefik-secure.tls.domains[0].sans=*.yourdomain.co.uk" # same here, change 0 to 1
       - "traefik.http.routers.traefik-secure.service=api@internal"
-
-  nginxreverseproxy:
-    image: prehmis/nginxreverseproxy
-    build: build/nginx
-    container_name: nginxreverseproxy
-    volumes:
-      #- ./logs/nginx/:/var/log/nginx/
-      - ./build/nginx/config/nginx.conf:/etc/nginx/nginx.conf
-    #NOTE : TLS key's path for HTTPS
-      - ./build/nginx/certs/:/etc/nginx/certs:ro
-      # Prometheus
-      - ./build/nginx/prom_pass/.htpasswd:/etc/nginx/.htpasswd  
-    networks:
-      - proxy
-    hostname: nginxreverseproxy
-    # links:
-    #   - prometheus
-    #   - gitbucket
-    #   - mantisbt
-    ports:
-      # GitBucket reverse 8080
-      - "8080:80"
-      - "8443:443"
-
-    # depends_on:
-    #   - gitbucket
-    command: ["nginx", "-g", "daemon off;"]
-    # restart: unless-stopped
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:22.0.3
-    # restart: always
-    command: start
-    depends_on:
-    - postgresql
-      # postgresql:
-      #   condition: service_healthy
-    environment:
-      - KC_PROXY_ADDRESS_FORWARDING=true
-      - KC_HOSTNAME_STRICT=false
-      - KC_HOSTNAME=https://keycloak.yourdomain.com:8443
-      #- KC_HOSTNAME_ADMIN_URL=keycloak.yourdomain.com
-      - KC_HOSTNAME_ADMIN_URL=https://keycloak.yourdomain.com:8443
-      #- KC_HOSTNAME_URL=keycloak.yourdomain.com
-      #- KC_HOSTNAME_URL=https://keycloak.yourdomain.com:8443
-      - KC_PROXY=edge
-      - KC_HTTP_ENABLED=true
-      - KC_DB=postgres
-      - KC_DB_USERNAME=keycloak
-      - KC_DB_PASSWORD=SUPERsecret
-      - KC_DB_URL_HOST=postgres
-      - KC_DB_URL_PORT=5432
-      - KC_DB_URL_DATABASE=keycloak
-      #- KC_DB_SCHEMA= public
-      - KEYCLOAK_ADMIN=admin
-      - KEYCLOAK_ADMIN_PASSWORD=password
-    # ports:
-    #   - "80:8080"
-    networks:
-      proxy:
-      keycloak:
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.keycloak.entrypoints=http"
-      - "traefik.http.routers.keycloak.rule=Host(`keycloak.yourdomain.com`)"
-      - "traefik.http.middlewares.keycloak-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.routers.keycloak.middlewares=keycloak-https-redirect"
-      - "traefik.http.routers.keycloak-secure.entrypoints=https"
-      - "traefik.http.routers.keycloak-secure.rule=Host(`keycloak.yourdomain.com`)"
-      - "traefik.http.routers.keycloak-secure.tls=true"
-      - "traefik.http.routers.keycloak-secure.service=keycloak"
-      - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
-      - "traefik.docker.network=proxy"
 
 networks:
   keycloak:
